@@ -1,0 +1,12 @@
+package-as: Herogram
+
+ignore:
+  - tests
+  - tools
+  - install.sh
+  - .gitignore
+  - .github
+  - .pkgmeta
+  - RELEASING.md
+  - Media/logo.png
+  - Media/thumbnail.png

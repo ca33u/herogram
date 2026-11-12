@@ -1,0 +1,18 @@
+## Interface: 16001
+## Title: |cffd9b25cHerogram|r
+## Notes: Share your hero: a card with your 3D character, level, professions and stats, sized for Stories, Instagram, Threads and X.
+## Notes-ruRU: Похвастайтесь героем: карточка с 3D-персонажем, уровнем, профессиями и статистикой в форматах для сторис, Instagram, Threads и X.
+## Author: addicted
+## Version: 0.1.0
+## X-License: MIT
+## X-Website: https://addicted.sh
+## IconTexture: Interface\AddOns\Herogram\Media\icon.blp
+## Category: Miscellaneous
+## SavedVariables: HerogramDB, HeraldDB
+## AddonCompartmentFunc: Herogram_OnAddonCompartmentClick
+
+Locale.lua
+Data.lua
+Card.lua
+Studio.lua
+Minimap.lua
