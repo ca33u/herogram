@@ -6,12 +6,15 @@ Writes, like the other addicted addons:
   Media/logo.png       1024x1024 (CurseForge / Wago / GitHub)
   Media/thumbnail.png  512x512
   Media/icon.blp       64x64 DXT5 (addon list icon)
-  Media/minimap.blp    64x64 DXT5 (minimap button; the game rounds it)
+  Media/minimap.blp    64x64 DXT5 (minimap button), already round: alpha 0
+                       outside an inscribed circle. The button must not use
+                       SetMask: on Forever a mask texture draws addon
+                       textures as scrambled stripes.
 
 Resizing is done by macOS `sips` (no Pillow needed); the BLPs go through
 tools/dxt.py, the same DXT5 writer as every other texture.
 """
-import os, struct, subprocess, sys, tempfile
+import math, os, struct, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -59,11 +62,27 @@ def read_tga(path):
     return w, h, rows
 
 
-def blp(src, name):
+def round_alpha(w, h, rows):
+    """Soft circle inscribed in the square (1.5 px edge), corners transparent."""
+    c, r = (w - 1) / 2, w / 2 - 1.0
+    out = []
+    for y in range(h):
+        row = []
+        for x in range(w):
+            R, G, B, A = rows[y][x]
+            k = max(0.0, min(1.0, (r - math.hypot(x - c, y - c)) / 1.5 + 0.5))
+            row.append((R, G, B, int(round(A * k))))
+        out.append(row)
+    return out
+
+
+def blp(src, name, round_=False):
     with tempfile.TemporaryDirectory() as tmp:
         tga = os.path.join(tmp, name + ".tga")
         sips(src, tga, 64, "tga")
         w, h, rows = read_tga(tga)
+    if round_:
+        rows = round_alpha(w, h, rows)
     path = os.path.join(MEDIA, name + ".blp")
     levels = dxt.write(path, w, h, rows)
     d = open(path, "rb").read()
@@ -82,7 +101,7 @@ def main():
     sips(src, os.path.join(MEDIA, "thumbnail.png"), 512, "png")
     print("Media/thumbnail.png 512x512")
     blp(src, "icon")
-    blp(src, "minimap")
+    blp(src, "minimap", round_=True)
 
 
 if __name__ == "__main__":

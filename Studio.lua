@@ -43,6 +43,8 @@ S.POSES = {
 	{ 52, "Spell" },
 }
 
+S.OPTIONAL = { hk = true, rep = true }
+
 S.SHOW = {
 	{ "guild", "Guild" },
 	{ "profs", "Professions" },
@@ -53,6 +55,8 @@ S.SHOW = {
 	{ "ilvl", "Item level" },
 	{ "pvp", "PvP rank" },
 	{ "item", "Best item" },
+	{ "hk", "Honorable kills" },
+	{ "rep", "Reputation" },
 	{ "gold", "Gold" },
 }
 
@@ -69,9 +73,11 @@ function S.DB()
 	end
 	db.accent = db.accent or "class"
 	db.frame = db.frame or "herogram"
+	db.card = db.card == "talents" and "talents" or "hero"
 	db.show = type(db.show) == "table" and db.show or {}
 	for _, s in ipairs(S.SHOW) do
-		if db.show[s[1]] == nil then
+		-- optional plaques stay nil (off) until switched: then they may fill a row
+		if db.show[s[1]] == nil and not S.OPTIONAL[s[1]] then
 			db.show[s[1]] = s[1] ~= "gold"
 		end
 	end
@@ -263,6 +269,21 @@ local function Build()
 	end)
 	close:SetPoint("TOPRIGHT", -10, -10)
 	y = y + 56
+
+	-- which card: the hero, or the talent trees
+	y = Heading(p, T("Card"), y)
+	p.cards = {}
+	local cw = (inner - 8) / 2
+	for i, c in ipairs({ { "hero", "Hero" }, { "talents", "Talents" } }) do
+		local b = Button(p, T(c[2]), cw, 24, function()
+			S.DB().card = c[1]
+			S.Refresh(true)
+		end)
+		b:SetPoint("TOPLEFT", 16 + (i - 1) * (cw + 8), -y)
+		b.key = c[1]
+		p.cards[#p.cards + 1] = b
+	end
+	y = y + 24 + 12
 
 	-- format
 	y = Heading(p, T("Format"), y)
@@ -601,6 +622,9 @@ function S.Sync()
 		return
 	end
 	local db = S.DB()
+	for _, b in ipairs(panel.cards) do
+		b:SetSelected(b.key == db.card)
+	end
 	for _, b in ipairs(panel.formats) do
 		b:SetSelected(b.key == db.format)
 	end
@@ -630,12 +654,16 @@ function S.Sync()
 		b:SetChecked(db.show[b.key] and true or false)
 		Mark(b)
 	end
+	local notes = {}
 	if #names > 0 then
 		local hint = db.format == "story" and T("switch something off.") or T("switch something off or pick Stories.")
-		panel.fitNote:SetText(string.format(T("Did not fit: %s. To show it, %s"), table.concat(names, ", "), hint))
-	else
-		panel.fitNote:SetText("")
+		notes[#notes + 1] = string.format(T("Did not fit: %s. To show it, %s"), table.concat(names, ", "), hint)
 	end
+	local filled = C.frame and C.frame.filled or {}
+	if #filled > 0 then
+		notes[#notes + 1] = "|cffa39a8a" .. string.format(T("Added to even out the row: %s."), table.concat(filled, ", ")) .. "|r"
+	end
+	panel.fitNote:SetText(table.concat(notes, " "))
 	for _, b in ipairs(panel.profToggles) do
 		if b:IsShown() then
 			b:SetChecked(not db.hideProfs[b.key])
@@ -678,7 +706,7 @@ function S.Refresh(replace)
 	local db = S.DB()
 	S.data = S.WithChosenItem(D.Collect())
 	C.state = db.model
-	C.Render(S.data, { format = db.format, accent = db.accent, show = db.show, headline = S.headline, model = db.model, hideProfs = db.hideProfs, frame = db.frame })
+	C.Render(S.data, { format = db.format, accent = db.accent, show = db.show, headline = S.headline, model = db.model, hideProfs = db.hideProfs, frame = db.frame, card = db.card })
 	S.LayoutProfs(S.data.profs or {})
 	if replace then
 		S.Place()
@@ -698,7 +726,7 @@ function S.Open(headline)
 	S.data = S.WithChosenItem(D.Collect())
 	S.LayoutProfs(S.data.profs or {})
 	C.state = db.model
-	C.Render(S.data, { format = db.format, accent = db.accent, show = db.show, headline = S.headline, hideProfs = db.hideProfs, frame = db.frame })
+	C.Render(S.data, { format = db.format, accent = db.accent, show = db.show, headline = S.headline, hideProfs = db.hideProfs, frame = db.frame, card = db.card })
 	panel:Show()
 	S.Place()
 	C.frame:Show()

@@ -90,6 +90,90 @@ Check(not D.Migrate() and HerogramDB.format == "post" and HeraldDB == nil, "Hero
 HerogramDB = nil
 Check(SlashCmdList.HEROGRAM and SLASH_HEROGRAM1 == "/herogram" and SLASH_HEROGRAM2 == "/herald", "/herogram, and /herald still works")
 
+-- talents when the tree info gives nothing, honor, reputation
+GetSpecialization = function() return 2 end
+GetSpecializationInfo = function() return 66, "Protection", "", 236264 end
+UnitCharacterPoints = function() return 1 end
+local spec = D.SpecTalents(34)
+Check(spec.text == "24" and spec.spec == "Protection" and spec.icon == 236264, "talents from the spec and the points left")
+UnitCharacterPoints = nil
+Check(D.SpecTalents(34).text == "Protection", "only the spec known: the spec is the value")
+GetSpecialization, GetSpecializationInfo = nil, nil
+Check(D.SpecTalents(34) == nil, "nothing known: no talents plaque")
+GetPVPLifetimeStats = function() return 123, 0, 0 end
+Check(D.HonorKills() == 123, "honorable kills")
+GetPVPLifetimeStats = function() return 0 end
+Check(D.HonorKills() == nil, "no kills: no plaque")
+GetPVPLifetimeStats = nil
+local bf = D.BestFaction({ { name = "Horde", header = true, standing = 8 }, { name = "Orgrimmar", standing = 5, value = 100 }, { name = "Undercity", standing = 6, value = 50 }, { name = "Bilgewater", standing = 6, value = 900 } })
+Check(bf.name == "Bilgewater", "best reputation: highest standing, then the most points")
+GetNumFactions = function() return 2 end
+local FACTIONS = { { "Undercity", "", 6, 0, 0, 3000, false, false, false, false, true }, { "Orgrimmar", "", 5, 0, 0, 100 } }
+GetFactionInfo = function(i) return unpack(FACTIONS[i], 1, 11) end
+FACTION_STANDING_LABEL6 = "Honored"
+local rep = D.BestReputation()
+Check(rep.name == "Undercity" and rep.standing == "Honored", "reputation from the faction list")
+GetNumFactions, GetFactionInfo = nil, nil
+
+-- an even plaque grid
+local even = { talents = { text = "0/21/13", spec = "Protection" }, played = 3600, quests = 300, ilvl = 32, steps = { today = 10, total = 20 }, hk = 55, rep = { name = "Undercity", standing = "Honored" } }
+local fill = D.Fillers(even, {}, 1)
+Check(#fill == 1 and fill[1].key == "hk" and fill[1].filler, "an empty cell takes the first optional plaque with data")
+Check(#D.Fillers(even, { hk = false, rep = false }, 2) == 0, "plaques you switched off are not added")
+Check(#D.Fillers({ played = 1 }, {}, 2) == 0, "no data: nothing to add")
+C.Render(even, { format = "square", show = {} })
+Check(#C.frame.filled == 1 and C.frame.plan.tiles.count == 6, "Square: 5 plaques + 1 added = 2 even rows of 3")
+C.Render({ played = 1, quests = 1, ilvl = 1, steps = { today = 1, total = 1 } }, { format = "square", show = {} })
+Check(#C.frame.filled == 0 and C.frame.plan.tiles.count == 4, "nothing to add: the last row is stretched instead")
+
+-- the Talents card
+local function Inside(r, f)
+	return r[1] >= 0 and r[2] >= 0 and r[1] + r[3] <= f.w + 0.01 and r[2] + r[4] <= f.h + 0.01
+end
+local function Overlap(a, b)
+	return a[1] < b[1] + b[3] and b[1] < a[1] + a[3] and a[2] < b[2] + b[4] and b[2] < a[2] + a[4]
+end
+local function TreeStubs()
+	local TAL = {}
+	for tab = 1, 3 do
+		TAL[tab] = {}
+		for tier = 1, 7 do
+			for col = 1, 3 do
+				TAL[tab][#TAL[tab] + 1] = { "T" .. tab .. tier .. col, 1000 + tier, tier, col, (tab == 2 and tier <= 5) and 3 or 0, 5 }
+			end
+		end
+	end
+	GetNumTalents = function(tab) return TAL[tab] and #TAL[tab] or 0 end
+	GetTalentInfo = function(tab, i) return unpack(TAL[tab][i], 1, 6) end
+	GetTalentPrereqs = function(tab, i) if i == 4 then return 1, 1, true end end
+end
+TreeStubs()
+local trees = D.ReadTrees()
+Check(#trees == 3 and #trees[1].talents == 21 and trees[1].tiers == 7 and trees[1].cols == 3, "trees: every talent by tier and column")
+Check(trees[2].points == 45 and D.MainTree(trees) == 2 and trees[1].talents[4].need[1] == 1, "points per tree, the main tree, prerequisites")
+Check(D.MainTree({ { points = 0 } }) == nil, "no points: no main tree")
+for _, f in ipairs(D.FORMATS) do
+	local TL = D.TreeLayout(f.key)
+	local plan = D.PlanTrees(f.key, 7, 4, TL.header[2] + 124)
+	local ok = plan.fits and plan.cell >= 20 and Inside(plan.model, f)
+	for _, t in ipairs(plan.trees) do
+		local r = { t.x, t.y, t.w, plan.height }
+		ok = ok and Inside(r, f) and not Overlap(r, plan.model) and t.y + plan.height <= TL.footer[2]
+	end
+	Check(ok, f.key .. ": three trees of 7 x 4 fit, clear of the hero and the footer (icon " .. plan.cell .. ")")
+end
+Check(not D.PlanTrees("wide", 40, 4, 150).fits, "a tree too tall to read is reported")
+HeraldDB = nil
+C.Render({ name = "X", level = 34, class = "Paladin", trees = trees, profs = {} }, { format = "square", card = "talents", show = {} })
+local tt = {}
+for i = 1, C.frame.pools.font.used do tt[#tt + 1] = tostring(C.frame.pools.font.list[i]._text) end
+tt = table.concat(tt, "\n")
+Check(C.frame.trees and #C.frame.dropped == 0 and tt:find("Talent", 1, true) == nil and tt:find("3/5", 1, true), "Talents card draws the trees with rank badges")
+Check(tt:find("PROTECTION PALADIN", 1, true), "the main tree names the card")
+C.Render({ name = "X", level = 34, trees = {}, profs = {} }, { format = "wide", card = "talents", show = {} })
+Check(C.frame.dropped[1] and C.frame.dropped[1].key == "talents", "no trees from the game: said on the card and in the panel")
+GetNumTalents, GetTalentInfo, GetTalentPrereqs = nil, nil, nil
+
 -- frames from the game
 Check(C.FrameStyle("wood").edge and C.FrameStyle("nope").key == "herogram", "frame styles")
 Check(C.TextureExists("x") == nil and #C.AvailableFrames() == #C.FRAMES, "without a way to check, every frame is offered")

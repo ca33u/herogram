@@ -75,6 +75,64 @@ function D.Layout(key)
 	return D.LAYOUTS[key] or D.LAYOUTS.story
 end
 
+-- The Talents card: header, hero and the three trees. Stories stacks
+-- header, hero and trees; Post and Square put the hero top left with the
+-- header beside it and the trees across below; Wide puts the hero on the
+-- left and header and trees on the right.
+D.TREE_LAYOUTS = {
+	story = { align = "CENTER", header = { 30, 44, 390 }, trees = { 26, 398 }, bottom = 756, footer = { 30, 768, 390, 14 } },
+	post = { align = "LEFT", header = { 186, 40, 266 }, model = { 0, 18, 176, 236 }, top = 262, trees = { 26, 428 }, bottom = 556, footer = { 32, 568, 416, 14 } },
+	square = { align = "LEFT", header = { 196, 36, 296 }, model = { 0, 14, 186, 214 }, top = 234, trees = { 26, 468 }, bottom = 478, footer = { 32, 488, 456, 14 } },
+	wide = { align = "LEFT", header = { 286, 32, 486 }, model = { 10, 10, 266, 430 }, trees = { 286, 486 }, bottom = 412, footer = { 286, 418, 486, 14 } },
+}
+D.TREE_GAP = 10
+D.TREE_TITLE = 20
+D.TREE_CELL_MAX = 40
+D.TREE_CELL_MIN = 13
+D.TREE_MODEL_MIN = 170
+D.TREE_MODEL_MAX = 300
+
+function D.TreeLayout(key)
+	return D.TREE_LAYOUTS[key] or D.TREE_LAYOUTS.story
+end
+
+-- Where the trees go: three trees of `tiers` x `cols` icons.
+-- Returns { cell, model = {x,y,w,h}, trees = { {x, y, w} x3 }, fits }.
+function D.PlanTrees(key, tiers, cols, headerBottom, count)
+	local L = D.TreeLayout(key)
+	local fmt = D.Format(key)
+	tiers, cols, count = math.max(1, tiers or 7), math.max(1, cols or 4), math.max(1, count or 3)
+	local x, w = L.trees[1], L.trees[2]
+	local tw = (w - D.TREE_GAP * (count - 1)) / count
+	local cellW = math.min(D.TREE_CELL_MAX, tw / cols)
+	local top = (headerBottom or (L.header[2] + 106)) + 8
+	local plan = {}
+	local gridTop
+	if L.model then
+		plan.model = { L.model[1], L.model[2], L.model[3], L.model[4] }
+		gridTop = math.max(top, L.top or top)
+	else
+		-- Stories: the hero takes what the trees leave
+		local need = D.TREE_TITLE + tiers * cellW
+		local mh = math.min(D.TREE_MODEL_MAX, L.bottom - top - need - 10)
+		if mh < D.TREE_MODEL_MIN then
+			mh = D.TREE_MODEL_MIN
+		end
+		local mw = math.min(fmt.w, mh * D.MODEL_ASPECT)
+		plan.model = { (fmt.w - mw) / 2, top, mw, mh }
+		gridTop = top + mh + 10
+	end
+	local cellH = (L.bottom - gridTop - D.TREE_TITLE) / tiers
+	plan.cell = math.floor(math.min(cellW, cellH) * 10) / 10
+	plan.fits = plan.cell >= D.TREE_CELL_MIN
+	plan.trees = {}
+	for i = 1, count do
+		plan.trees[i] = { x = x + (i - 1) * (tw + D.TREE_GAP), y = gridTop, w = tw }
+	end
+	plan.height = D.TREE_TITLE + tiers * plan.cell
+	return plan
+end
+
 -- Where the header text usually ends (level line, name, race and class,
 -- guild), for planning before the card is drawn.
 function D.HeaderBottom(key)
@@ -483,8 +541,44 @@ function D.Stats(data, show)
 	Add("quests", T("Quests done"), data.quests and D.Number(data.quests), nil)
 	Add("ilvl", T("Item level"), data.ilvl and tostring(data.ilvl), T("average"))
 	Add("pvp", T("PvP rank"), data.pvp, nil, data.faction == "Alliance" and "Interface\\Icons\\INV_BannerPVP_02" or nil)
+	-- off unless switched on (they also fill an empty cell, see D.Fillers)
+	if show.hk == true then
+		Add("hk", T("Honorable kills"), data.hk and D.Number(data.hk), nil)
+	end
+	if show.rep == true then
+		Add("rep", T("Reputation"), data.rep and data.rep.standing, data.rep and data.rep.name)
+	end
 	if show.gold == true then
 		Add("gold", T("Gold"), data.money and D.Coins(data.money), nil)
+	end
+	return out
+end
+
+-- Plaques that may fill an empty cell in the last row: the optional ones
+-- you never switched on or off (show[key] == nil) that have data. Gold is
+-- never added by itself.
+D.FILLERS = { "hk", "rep" }
+
+function D.Fillers(data, show, need)
+	local out = {}
+	for _, key in ipairs(D.FILLERS) do
+		if #out >= need then
+			break
+		end
+		if show[key] == nil then
+			local try = {}
+			for k, v in pairs(show) do
+				try[k] = v
+			end
+			try[key] = true
+			local t = D.Stats(data, try)
+			for _, tile in ipairs(t) do
+				if tile.key == key then
+					tile.filler = true
+					out[#out + 1] = tile
+				end
+			end
+		end
 	end
 	return out
 end
@@ -636,6 +730,126 @@ function D.ReadTalentTab(r)
 	return nil
 end
 
+-- When the tree info gives nothing: the spec from the specialization API
+-- and the points spent from the level and the points left.
+function D.SpecTalents(level)
+	local name, icon
+	local spec = Call(GetSpecialization) or (C_SpecializationInfo and Call(C_SpecializationInfo.GetSpecialization))
+	if type(spec) == "number" and spec > 0 then
+		local r = Pack(Call(GetSpecializationInfo, spec))
+		if r.n < 2 and C_SpecializationInfo then
+			r = Pack(Call(C_SpecializationInfo.GetSpecializationInfo, spec))
+		end
+		name, icon = r[2], r[4]
+	end
+	local unspent = Call(UnitCharacterPoints, "player")
+	local spent = type(unspent) == "number" and type(level) == "number" and math.max(0, level - 9 - unspent) or nil
+	if type(name) ~= "string" and not (spent and spent > 0) then
+		return nil
+	end
+	local spec = type(name) == "string" and name or nil
+	return {
+		text = spent and tostring(spent) or spec,
+		spec = spent and spec or nil,
+		icon = icon,
+	}
+end
+
+-- Lifetime honorable kills (nil when none).
+function D.HonorKills()
+	local hk = Call(GetPVPLifetimeStats)
+	if type(hk) == "number" and hk > 0 then
+		return hk
+	end
+	return nil
+end
+
+-- The faction you stand best with: { name, standing (text), id }.
+function D.BestFaction(list)
+	local best
+	for _, f in ipairs(list or {}) do
+		if not f.header and type(f.standing) == "number" and type(f.name) == "string" then
+			if not best or f.standing > best.standing or (f.standing == best.standing and (f.value or 0) > (best.value or 0)) then
+				best = f
+			end
+		end
+	end
+	return best
+end
+
+function D.BestReputation()
+	local list = {}
+	if C_Reputation and C_Reputation.GetNumFactions and C_Reputation.GetFactionDataByIndex then
+		for i = 1, (Call(C_Reputation.GetNumFactions) or 0) do
+			local f = Call(C_Reputation.GetFactionDataByIndex, i)
+			if type(f) == "table" then
+				list[#list + 1] = { name = f.name, standing = f.reaction, value = f.currentStanding, header = f.isHeader and not f.isHeaderWithRep }
+			end
+		end
+	elseif GetNumFactions and GetFactionInfo then
+		for i = 1, (Call(GetNumFactions) or 0) do
+			local name, _, standing, _, _, value, _, _, header, _, hasRep = Call(GetFactionInfo, i)
+			list[#list + 1] = { name = name, standing = standing, value = value, header = header and not hasRep }
+		end
+	end
+	local best = D.BestFaction(list)
+	if not best then
+		return nil
+	end
+	local label = _G["FACTION_STANDING_LABEL" .. best.standing]
+	return { name = best.name, standing = type(label) == "string" and label or tostring(best.standing), id = best.standing }
+end
+
+-- The three trees with every talent: name, icon, tier, column, rank,
+-- max rank, and the talent it needs (tier, column) when there is one.
+function D.ReadTrees()
+	local trees = {}
+	for i = 1, (Call(GetNumTalentTabs) or 0) do
+		local r = Pack(Call(GetTalentTabInfo, i))
+		local name, icon, points = D.ReadTalentTab(r)
+		local bg
+		if type(r[1]) == "number" then
+			bg = r[6]
+		else
+			bg = r[4]
+		end
+		local tree = { name = name, icon = icon, points = 0, bg = type(bg) == "string" and bg or nil, talents = {}, tiers = 0, cols = 0 }
+		for t = 1, (Call(GetNumTalents, i) or 0) do
+			local tr = Pack(Call(GetTalentInfo, i, t))
+			local tier, col, rank, max = tr[3], tr[4], tr[5], tr[6]
+			if type(tier) == "number" and type(col) == "number" then
+				local talent = { name = tr[1], icon = tr[2], tier = tier, col = col, rank = type(rank) == "number" and rank or 0, max = type(max) == "number" and max or 1 }
+				local pq = Pack(Call(GetTalentPrereqs, i, t))
+				if type(pq[1]) == "number" and type(pq[2]) == "number" then
+					talent.need = { pq[1], pq[2] }
+				end
+				tree.talents[#tree.talents + 1] = talent
+				tree.points = tree.points + talent.rank
+				tree.tiers = math.max(tree.tiers, tier)
+				tree.cols = math.max(tree.cols, col)
+			end
+		end
+		if type(points) == "number" and points > tree.points then
+			tree.points = points
+		end
+		if type(name) == "string" then
+			trees[#trees + 1] = tree
+		end
+	end
+	return trees
+end
+
+-- The tree with the most points (nil when none has any).
+function D.MainTree(trees)
+	local best
+	for i, t in ipairs(trees or {}) do
+		if t.points > 0 and (not best or t.points > trees[best].points) then
+			best = i
+		end
+	end
+	return best
+end
+
 local function TalentTabs()
 	local out, total = {}, 0
 	for i = 1, (Call(GetNumTalentTabs) or 0) do
@@ -708,10 +922,41 @@ function D.DebugLines()
 			out[#out + 1] = "  GetTalentTabInfo(" .. i .. "): " .. Join(Pack(pcall(GetTalentTabInfo, i)))
 		end
 		if GetNumTalents then
-			out[#out + 1] = "  GetNumTalents(1): " .. Join(Pack(pcall(GetNumTalents, 1)))
-			out[#out + 1] = "  GetTalentInfo(1, 1): " .. Join(Pack(pcall(GetTalentInfo, 1, 1)))
+			for tab = 1, 3 do
+				out[#out + 1] = "  GetNumTalents(" .. tab .. "): " .. Join(Pack(pcall(GetNumTalents, tab)))
+				for t = 1, 3 do
+					out[#out + 1] = "    GetTalentInfo(" .. tab .. ", " .. t .. "): " .. Join(Pack(pcall(GetTalentInfo, tab, t)))
+				end
+			end
+			if GetTalentPrereqs then
+				for t = 1, 8 do
+					local r = Pack(pcall(GetTalentPrereqs, 1, t))
+					if r.n > 1 then
+						out[#out + 1] = "  GetTalentPrereqs(1, " .. t .. "): " .. Join(r)
+					end
+				end
+			end
 		end
+		local trees = D.ReadTrees()
+		local parts = {}
+		for _, t in ipairs(trees) do
+			parts[#parts + 1] = tostring(t.name) .. " " .. t.points .. " (" .. #t.talents .. " talents, " .. t.tiers .. "x" .. t.cols .. ", bg " .. tostring(t.bg) .. ")"
+		end
+		out[#out + 1] = "  trees: " .. (#parts > 0 and table.concat(parts, "; ") or "none")
 	end
+	local function Has2(name)
+		return type(_G[name]) == "function" and "yes" or "no"
+	end
+	out[#out + 1] = "GetSpecialization " .. Has2("GetSpecialization") .. ", UnitCharacterPoints " .. Has2("UnitCharacterPoints") .. ", C_SpecializationInfo " .. (C_SpecializationInfo and "yes" or "no") .. ", C_ClassTalents " .. (C_ClassTalents and "yes" or "no")
+	if GetSpecialization then
+		out[#out + 1] = "  GetSpecialization: " .. Join(Pack(pcall(GetSpecialization)))
+	end
+	if UnitCharacterPoints then
+		out[#out + 1] = "  UnitCharacterPoints: " .. Join(Pack(pcall(UnitCharacterPoints, "player")))
+	end
+	out[#out + 1] = "  GetPVPLifetimeStats: " .. (GetPVPLifetimeStats and Join(Pack(pcall(GetPVPLifetimeStats))) or "no")
+	local rep = D.BestReputation()
+	out[#out + 1] = "  best reputation: " .. (rep and (tostring(rep.name) .. " " .. tostring(rep.standing)) or "none")
 	local p = D.ReadProfessions()
 	out[#out + 1] = "Herogram reads " .. #p .. " professions; talents: " .. tostring(D.Talents(TalentTabs()) and D.Talents(TalentTabs()).text)
 	return out
@@ -978,7 +1223,10 @@ function D.Collect()
 	data.guild = Call(GetGuildInfo, "player")
 	data.realm = Call(GetRealmName)
 	data.profs = D.ReadProfessions()
-	data.talents = (data.level or 0) >= 10 and D.Talents(TalentTabs()) or nil
+	data.talents = (data.level or 0) >= 10 and (D.Talents(TalentTabs()) or D.SpecTalents(data.level)) or nil
+	data.hk = D.HonorKills()
+	data.trees = D.ReadTrees()
+	data.rep = D.BestReputation()
 	local items = Items()
 	data.best = D.BestItem(items)
 	data.ilvl = D.AverageItemLevel(items)

@@ -217,6 +217,9 @@ local function Pool(card, kind)
 	else
 		o:SetTexCoord(0, 1, 0, 1)
 		o:SetVertexColor(1, 1, 1, 1)
+		if o.SetDesaturated then
+			o:SetDesaturated(false)
+		end
 		o:SetBlendMode("BLEND")
 		o:SetDrawLayer("ARTWORK", 0)
 	end
@@ -660,9 +663,12 @@ end
 
 local function Stats(card, tiles, b, d)
 	local cols, gap, th = b.cols, d.gap, d.tile
-	local tw = (b.w - gap * (cols - 1)) / cols
+	local rows = math.ceil(b.count / cols)
 	for i = 1, b.count do
 		local col, row = (i - 1) % cols, math.floor((i - 1) / cols)
+		-- a short last row is stretched across, so the grid stays even
+		local inRow = row == rows - 1 and b.count - (rows - 1) * cols or cols
+		local tw = (b.w - gap * (inRow - 1)) / inRow
 		C.Plaque(card, tiles[i], b.x + col * (tw + gap), b.y + row * (th + gap), tw, th)
 	end
 end
@@ -808,6 +814,44 @@ local function Footer(card, L)
 	Tex(card, x + w - Width(mark) - 15, y + 1, 9, 9, C.GOLD, 0.6, MEDIA .. "diamond.blp", "OVERLAY", 1)
 end
 
+-- The hero's glow, shadow and model frame for a region m = {x, y, w, h}.
+function C.PlaceHero(f, m, fmt, accent)
+	local W, H = fmt.w, fmt.h
+	local mx, my = m[1] + m[3] / 2, m[2] + m[4] * 0.46
+	local g = math.max(m[3], m[4]) * 1.15
+	f.glow:ClearAllPoints()
+	f.glow:SetSize(g, g)
+	f.glow:SetPoint("CENTER", f, "TOPLEFT", mx, -my)
+	f.glow:SetVertexColor(accent[1], accent[2], accent[3], 0.6)
+	local c = Mix(accent, { 1, 1, 1 }, 0.45)
+	f.core:ClearAllPoints()
+	f.core:SetSize(g * 0.42, g * 0.42)
+	f.core:SetPoint("CENTER", f, "TOPLEFT", mx, -my)
+	f.core:SetVertexColor(c[1], c[2], c[3], 0.22)
+	f.shadow:ClearAllPoints()
+	f.shadow:SetSize(m[3] * 0.62, 34)
+	f.shadow:SetPoint("CENTER", f, "TOPLEFT", mx, -(m[2] + m[4] - 24))
+	f.shadow:SetVertexColor(0, 0, 0, 0.75)
+
+	f.baseZoom = D.HeroZoom(fmt.key)
+	-- The model frame covers the whole card, so no frame edge inside the
+	-- card can cut the hero; the camera puts the hero in its region
+	-- (view insets). Clients without view insets get the region itself.
+	f.hero = m
+	f.model:ClearAllPoints()
+	if f.model.SetViewInsets then
+		local b = C.MODEL_BORDER
+		f.model:SetPoint("TOPLEFT", f, "TOPLEFT", b, -b)
+		f.model:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -b, b)
+		f.insets = { C.HeroInsets(W, H, m, b) }
+	else
+		f.model:SetPoint("TOPLEFT", f, "TOPLEFT", m[1], -m[2])
+		f.model:SetSize(m[3], m[4])
+		f.insets = nil
+	end
+
+end
+
 -- Draws the whole card. opts: format, accent, show, headline, model,
 -- hideProfs (profession key -> true to leave it off).
 function C.Render(data, opts)
@@ -845,12 +889,27 @@ function C.Render(data, opts)
 		f.style = C.FRAMES[1]
 		Frame(f, W, H)
 	end
+	if opts.card == "talents" then
+		C.DrawTalents(f, data, opts, fmt, accent)
+		return C.Finish(f, D.TreeLayout(fmt.key))
+	end
+	f.trees = nil
 	local headerBottom = Header(f, data, opts, L, accent)
 
 	-- what is switched on, and where it all goes
 	local show = opts.show or {}
 	local profs = show.profs ~= false and C.ProfList(data, opts.hideProfs) or {}
 	local tiles = D.Stats(data, show)
+	-- an empty cell in the last row is filled with an optional plaque
+	-- that has data (the panel says which); else the last row stretches
+	local cols = D.TileCols(L.col[2])
+	f.filled = {}
+	if #tiles % cols ~= 0 then
+		for _, t in ipairs(D.Fillers(data, show, cols - #tiles % cols)) do
+			tiles[#tiles + 1] = t
+			f.filled[#f.filled + 1] = t.label
+		end
+	end
 	local item = show.item ~= false and data.best or nil
 	local plan = D.PlanCard(fmt.key, { profs = #profs, tiles = #tiles, item = item ~= nil }, headerBottom)
 	f.plan = plan
@@ -866,39 +925,7 @@ function C.Render(data, opts)
 	end
 	f.dropped = left
 
-	local m = plan.model
-	local mx, my = m[1] + m[3] / 2, m[2] + m[4] * 0.46
-	local g = math.max(m[3], m[4]) * 1.15
-	f.glow:ClearAllPoints()
-	f.glow:SetSize(g, g)
-	f.glow:SetPoint("CENTER", f, "TOPLEFT", mx, -my)
-	f.glow:SetVertexColor(accent[1], accent[2], accent[3], 0.6)
-	local c = Mix(accent, { 1, 1, 1 }, 0.45)
-	f.core:ClearAllPoints()
-	f.core:SetSize(g * 0.42, g * 0.42)
-	f.core:SetPoint("CENTER", f, "TOPLEFT", mx, -my)
-	f.core:SetVertexColor(c[1], c[2], c[3], 0.22)
-	f.shadow:ClearAllPoints()
-	f.shadow:SetSize(m[3] * 0.62, 34)
-	f.shadow:SetPoint("CENTER", f, "TOPLEFT", mx, -(m[2] + m[4] - 24))
-	f.shadow:SetVertexColor(0, 0, 0, 0.75)
-
-	f.baseZoom = D.HeroZoom(fmt.key)
-	-- The model frame covers the whole card, so no frame edge inside the
-	-- card can cut the hero; the camera puts the hero in its region
-	-- (view insets). Clients without view insets get the region itself.
-	f.hero = m
-	f.model:ClearAllPoints()
-	if f.model.SetViewInsets then
-		local b = C.MODEL_BORDER
-		f.model:SetPoint("TOPLEFT", f, "TOPLEFT", b, -b)
-		f.model:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -b, b)
-		f.insets = { C.HeroInsets(W, H, m, b) }
-	else
-		f.model:SetPoint("TOPLEFT", f, "TOPLEFT", m[1], -m[2])
-		f.model:SetSize(m[3], m[4])
-		f.insets = nil
-	end
+	C.PlaceHero(f, plan.model, fmt, accent)
 
 	if plan.profs then
 		Professions(f, profs, plan.profs, plan.d)
@@ -909,8 +936,12 @@ function C.Render(data, opts)
 	if plan.item then
 		Item(f, item, plan.item, plan.d)
 	end
-	Footer(f, L)
+	return C.Finish(f, L)
+end
 
+-- Footer, the item drop target, and hiding what this draw did not use.
+function C.Finish(f, L)
+	Footer(f, L)
 	C.PlaceDrop(f)
 	for _, kind in ipairs({ "font", "tex", "edge" }) do
 		local p = f.pools[kind]
@@ -919,4 +950,148 @@ function C.Render(data, opts)
 		end
 	end
 	return f
+end
+
+------------------------------------------------------------------------
+-- The Talents card: name, hero, professions in one line, and the three
+-- talent trees drawn like the game's talent frame.
+------------------------------------------------------------------------
+
+-- "Engineering 150  ·  Mining 146  ·  First Aid 150"
+function C.ProfLine(list)
+	local parts = {}
+	for _, p in ipairs(list or {}) do
+		parts[#parts + 1] = p.name .. " " .. p.rank
+	end
+	return table.concat(parts, "  ·  ")
+end
+
+-- The background art of a tree (the game's TopLeft piece), if present.
+function C.TreeArt(bg)
+	if type(bg) ~= "string" or bg == "" then
+		return nil
+	end
+	local path = bg:find("\\") and bg or ("Interface\\TalentFrame\\" .. bg)
+	path = path .. "-TopLeft"
+	if C.TextureExists(path) == false then
+		return nil
+	end
+	return path
+end
+
+local function Tree(card, tree, b, cell, main, accent)
+	local x, y, w = b.x, b.y, b.w
+	local cols = math.max(4, tree.cols)
+	local gw = cols * cell
+	local gx = x + (w - gw) / 2
+	local gy = y + D.TREE_TITLE
+	local h = D.TREE_TITLE + math.max(tree.tiers, 1) * cell
+	-- dark panel, the tree's own art dimmed, a frame
+	local panel = Tex(card, x, y, w, h, { 0, 0, 0 }, 0.35, nil, "BORDER", 0)
+	local art = C.TreeArt(tree.bg)
+	if art then
+		local a = Tex(card, x, gy, w, h - D.TREE_TITLE, { 1, 1, 1 }, 0.28, art, "BORDER", 1)
+		a:SetTexCoord(0, 1, 0, 1)
+	end
+	local edge = main and accent or C.GOLD
+	local ea = main and 0.9 or 0.35
+	Tex(card, x, y, w, 1, edge, ea, nil, "BORDER", 2)
+	Tex(card, x, y + h - 1, w, 1, edge, ea, nil, "BORDER", 2)
+	Tex(card, x, y, 1, h, edge, ea, nil, "BORDER", 2)
+	Tex(card, x + w - 1, y, 1, h, edge, ea, nil, "BORDER", 2)
+	-- title: name and points
+	local title = Text(card, (tree.name or "?") .. "  " .. tree.points, "body", 11, main and accent or C.INK, x + w / 2, y + 4, "CENTER", w - 8)
+	title:SetShadowColor(0, 0, 0, 0.9)
+	title:SetShadowOffset(1, -1)
+	local is = cell * 0.78
+	local pad = (cell - is) / 2
+	local at = {}
+	for _, t in ipairs(tree.talents) do
+		at[t.tier .. ":" .. t.col] = t
+	end
+	-- arrows from the talent each one needs (straight ones only)
+	for _, t in ipairs(tree.talents) do
+		if t.need then
+			local from = at[t.need[1] .. ":" .. t.need[2]]
+			if from then
+				local taken = t.rank > 0
+				local col = taken and C.GOLD or { 0.5, 0.5, 0.5 }
+				local fx, fy = gx + (from.col - 0.5) * cell, gy + (from.tier - 0.5) * cell
+				local tx, ty = gx + (t.col - 0.5) * cell, gy + (t.tier - 0.5) * cell
+				if from.col == t.col then
+					Tex(card, fx - 1, fy, 2, ty - fy, col, taken and 0.9 or 0.5, nil, "ARTWORK", 0)
+				elseif from.tier == t.tier then
+					Tex(card, math.min(fx, tx), fy - 1, math.abs(tx - fx), 2, col, taken and 0.9 or 0.5, nil, "ARTWORK", 0)
+				end
+			end
+		end
+	end
+	for _, t in ipairs(tree.talents) do
+		local ix = gx + (t.col - 1) * cell + pad
+		local iy = gy + (t.tier - 1) * cell + pad
+		local taken = t.rank > 0
+		local full = taken and t.rank >= t.max
+		local border = full and C.GOLD or taken and { 0.3, 0.95, 0.3 } or { 0.35, 0.35, 0.35 }
+		Tex(card, ix - 1, iy - 1, is + 2, is + 2, border, taken and 1 or 0.6, nil, "ARTWORK", 2)
+		local icon = Tex(card, ix, iy, is, is, { 1, 1, 1 }, taken and 1 or 0.45, nil, "ARTWORK", 3)
+		icon:SetTexture(t.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
+		icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+		if not taken and icon.SetDesaturated then
+			icon:SetDesaturated(true)
+		end
+		if taken then
+			local fs = math.max(7, math.floor(cell * 0.27))
+			Tex(card, ix + is - fs * 1.9, iy + is - fs - 2, fs * 1.9 + 1, fs + 3, { 0, 0, 0 }, 0.75, nil, "ARTWORK", 4)
+			local badge = Text(card, t.rank .. "/" .. t.max, "body", fs, full and C.GOLD or { 0.4, 1, 0.4 }, ix + is, iy + is - fs - 1, "RIGHT")
+			badge:SetDrawLayer("OVERLAY", 5)
+		end
+	end
+end
+
+function C.DrawTalents(f, data, opts, fmt, accent)
+	local L = D.TreeLayout(fmt.key)
+	local show = opts.show or {}
+	local o = {}
+	for k, v in pairs(opts) do
+		o[k] = v
+	end
+	-- the main tree names the card unless you wrote a headline
+	local trees = data.trees or {}
+	local main = D.MainTree(trees)
+	if not (type(o.headline) == "string" and o.headline:find("%S")) and main then
+		o.headline = trees[main].name .. " " .. (data.class or "")
+	end
+	local cy = Header(f, data, o, L, accent)
+	if show.profs ~= false then
+		local line = C.ProfLine(C.ProfList(data, opts.hideProfs))
+		if line ~= "" then
+			local center = L.align == "CENTER"
+			Text(f, line, "body", 10, C.DIM, center and L.header[1] + L.header[3] / 2 or L.header[1], cy + 2, center and "CENTER" or "LEFT", L.header[3])
+			cy = cy + 18
+		end
+	end
+	local tiers, cols = 1, 4
+	for _, t in ipairs(trees) do
+		tiers, cols = math.max(tiers, t.tiers), math.max(cols, t.cols)
+	end
+	if #trees == 0 then
+		tiers = 7
+	end
+	local plan = D.PlanTrees(fmt.key, tiers, cols, cy, math.max(#trees, 3))
+	f.plan, f.trees, f.filled = plan, trees, {}
+	C.PlaceHero(f, plan.model, fmt, accent)
+	f.dropped = {}
+	if #trees == 0 then
+		Text(f, T("The game did not give the talent trees. /herogram debug shows what it says."), "body", 11, C.DIM, fmt.w / 2, plan.trees[1].y + 20, "CENTER", fmt.w - 60)
+		f.dropped[1] = { key = "talents", label = T("Talent trees") }
+		return
+	end
+	if not plan.fits then
+		f.dropped[1] = { key = "talents", label = T("Talent trees") }
+	end
+	for i, tree in ipairs(trees) do
+		if plan.trees[i] then
+			Tree(f, tree, plan.trees[i], plan.cell, i == main, accent)
+		end
+	end
 end
